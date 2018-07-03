@@ -24,7 +24,6 @@ from . import data
 from . import finance
 from . import gens
 from . import utils
-from .utils.calendars import get_calendar
 from .utils.numpy_utils import numpy_version
 from .utils.pandas_utils import new_pandas
 from .utils.run_algo import run_algorithm
