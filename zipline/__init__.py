@@ -91,6 +91,7 @@ def setup(self,
           numpy_version=numpy_version,
           StrictVersion=StrictVersion,
           new_pandas=new_pandas):
+    """Lives in zipline.__init__ for doctests."""
 
     legacy_version = '1.13'
     if numpy_version > StrictVersion(legacy_version):
@@ -108,6 +109,8 @@ def setup(self,
 
 
 def teardown(self, np=np):
+    """Lives in zipline.__init__ for doctests."""
+
     if self.old_err is not None:
         np.seterr(**self.old_err)
 
