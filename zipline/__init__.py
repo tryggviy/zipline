@@ -12,13 +12,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from distutils.version import StrictVersion
 import os
-from trading_calendars import get_calendar
+import numpy as np
 
 # This is *not* a place to dump arbitrary classes/modules for convenience,
 # it is a place to expose the public interfaces.
-from distutils.version import StrictVersion
-import numpy as np
+from trading_calendars import get_calendar
 
 from . import data
 from . import finance
@@ -118,6 +118,7 @@ def teardown(self, np=np):
         np.set_printoptions(**self.old_opts)
 
 
+del os
 del np
 del numpy_version
 del StrictVersion
