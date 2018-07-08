@@ -18,7 +18,16 @@ skip_pipeline_new_pandas = \
     'Pipeline categoricals are not yet compatible with pandas >=0.19'
 
 if pandas_version >= StrictVersion('0.20'):
-    from pandas.core.tools.datetimes import normalize_date  # noqa
+    def normalize_date(dt):
+        """
+        Normalize datetime.datetime value to midnight. Returns datetime.date as
+        a datetime.datetime at midnight
+
+        Returns
+        -------
+        normalized : datetime.datetime or Timestamp
+        """
+        return dt.normalize()
 else:
     from pandas.tseries.tools import normalize_date  # noqa
 
