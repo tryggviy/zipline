@@ -405,6 +405,8 @@ def _downgrade_v7(op):
             exchanges ex
         on
             eq.exchange == ex.exchange
+        where
+            ex.country_code in ('US', '??')
         """,
     )
     op.drop_table('equities')
