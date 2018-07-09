@@ -31,7 +31,6 @@ from nose_parameterized import parameterized
 import numpy as np
 from numpy import full, int32, int64
 import pandas as pd
-from pandas.util.testing import assert_frame_equal
 from six import viewkeys
 import sqlalchemy as sa
 
@@ -78,6 +77,7 @@ from zipline.testing import (
     all_subindices,
     empty_assets_db,
     parameter_space,
+    powerset,
     tmp_assets_db,
     tmp_asset_finder,
 )
@@ -951,41 +951,77 @@ class AssetFinderTestCase(WithTradingCalendars, ZiplineTestCase):
         self.assertListEqual([201, 2, 200, 1], post_map)
 
     def test_compute_lifetimes(self):
-        num_assets = 4
+        assets_per_exchange = 4
         trading_day = self.trading_calendar.day
         first_start = pd.Timestamp('2015-04-01', tz='UTC')
 
-        frame = make_rotating_equity_info(
-            num_assets=num_assets,
-            first_start=first_start,
-            frequency=trading_day,
-            periods_between_starts=3,
-            asset_lifetime=5
+        equities = pd.concat(
+            [
+                make_rotating_equity_info(
+                    num_assets=assets_per_exchange,
+                    first_start=first_start,
+                    frequency=trading_day,
+                    periods_between_starts=3,
+                    asset_lifetime=5,
+                    exchange=exchange,
+                )
+                for exchange in (
+                    'US_EXCHANGE_1',
+                    'US_EXCHANGE_2',
+                    'CA_EXCHANGE',
+                    'JP_EXCHANGE',
+                )
+            ],
+            ignore_index=True,
         )
-        self.write_assets(equities=frame)
+        # make every symbol unique
+        equities['symbol'] = [chr(ord('A') + i) for i in range(len(equities))]
+
+        # shuffle up the sids so they are not contiguous per exchange
+        sids = np.arange(len(equities))
+        np.random.RandomState(1337).shuffle(sids)
+        equities.index = sids
+        permute_sid = dict(zip(sids, range(len(sids)))).__getitem__
+
+        exchanges = pd.DataFrame.from_records([
+            {'exchange': 'US_EXCHANGE_1', 'country_code': 'US'},
+            {'exchange': 'US_EXCHANGE_2', 'country_code': 'US'},
+            {'exchange': 'CA_EXCHANGE', 'country_code': 'CA'},
+            {'exchange': 'JP_EXCHANGE', 'country_code': 'JP'},
+        ])
+        sids_per_country = {
+            'US': equities.index[:2 * assets_per_exchange],
+            'CA': equities.index[
+                2 * assets_per_exchange:3 * assets_per_exchange
+            ],
+            'JP': equities.index[3 * assets_per_exchange:],
+        }
+        self.write_assets(equities=equities, exchanges=exchanges)
         finder = self.asset_finder
 
         all_dates = pd.date_range(
             start=first_start,
-            end=frame.end_date.max(),
+            end=equities.end_date.max(),
             freq=trading_day,
         )
 
         for dates in all_subindices(all_dates):
             expected_with_start_raw = full(
-                shape=(len(dates), num_assets),
+                shape=(len(dates), assets_per_exchange),
                 fill_value=False,
                 dtype=bool,
             )
             expected_no_start_raw = full(
-                shape=(len(dates), num_assets),
+                shape=(len(dates), assets_per_exchange),
                 fill_value=False,
                 dtype=bool,
             )
 
             for i, date in enumerate(dates):
-                it = frame[['start_date', 'end_date']].itertuples()
-                for j, start, end in it:
+                it = equities.iloc[:4][['start_date', 'end_date']].itertuples(
+                    index=False,
+                )
+                for j, (start, end) in enumerate(it):
                     # This way of doing the checks is redundant, but very
                     # clear.
                     if start <= date <= end:
@@ -993,21 +1029,48 @@ class AssetFinderTestCase(WithTradingCalendars, ZiplineTestCase):
                         if start < date:
                             expected_no_start_raw[i, j] = True
 
-            expected_with_start = pd.DataFrame(
-                data=expected_with_start_raw,
-                index=dates,
-                columns=frame.index.values,
-            )
-            result = finder.lifetimes(dates, include_start_date=True)
-            assert_frame_equal(result, expected_with_start)
+            for country_codes in powerset(exchanges.country_code.unique()):
+                expected_sids = pd.Int64Index(sorted(concat(
+                    sids_per_country[country_code]
+                    for country_code in country_codes
+                )))
+                permuted_sids = [
+                    sid for sid in sorted(expected_sids, key=permute_sid)
+                ]
+                tile_count = len(country_codes) + ('US' in country_codes)
+                expected_with_start = pd.DataFrame(
+                    data=np.tile(
+                        expected_with_start_raw,
+                        tile_count,
+                    ),
+                    index=dates,
+                    columns=pd.Int64Index(permuted_sids),
+                )
+                result = finder.lifetimes(
+                    dates,
+                    include_start_date=True,
+                    country_codes=country_codes,
+                )
+                assert_equal(result.columns, expected_sids)
+                result = result[permuted_sids]
+                assert_equal(result, expected_with_start)
 
-            expected_no_start = pd.DataFrame(
-                data=expected_no_start_raw,
-                index=dates,
-                columns=frame.index.values,
-            )
-            result = finder.lifetimes(dates, include_start_date=False)
-            assert_frame_equal(result, expected_no_start)
+                expected_no_start = pd.DataFrame(
+                    data=np.tile(
+                        expected_no_start_raw,
+                        tile_count,
+                    ),
+                    index=dates,
+                    columns=pd.Int64Index(permuted_sids),
+                )
+                result = finder.lifetimes(
+                    dates,
+                    include_start_date=False,
+                    country_codes=country_codes,
+                )
+                assert_equal(result.columns, expected_sids)
+                result = result[permuted_sids]
+                assert_equal(result, expected_no_start)
 
     def test_sids(self):
         # Ensure that the sids property of the AssetFinder is functioning

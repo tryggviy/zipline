@@ -319,7 +319,7 @@ class AssetFinder(object):
         self._ordered_contracts = {}
 
         # Populated on first call to `lifetimes`.
-        self._asset_lifetimes = None
+        self._asset_lifetimes = {}
 
     @lazyval
     def exchange_info(self):
@@ -1391,27 +1391,34 @@ class AssetFinder(object):
         # Return a list of the sids of the found assets
         return [asset.sid for asset in matches]
 
-    def _compute_asset_lifetimes(self):
+    def _compute_asset_lifetimes(self, country_codes):
         """
         Compute and cache a recarry of asset lifetimes.
         """
         equities_cols = self.equities.c
-        buf = np.array(
-            tuple(
-                sa.select((
-                    equities_cols.sid,
-                    equities_cols.start_date,
-                    equities_cols.end_date,
-                )).execute(),
-            ), dtype='<f8',  # use doubles so we get NaNs
-        )
+        if country_codes:
+            buf = np.array(
+                tuple(
+                    sa.select((
+                        equities_cols.sid,
+                        equities_cols.start_date,
+                        equities_cols.end_date,
+                    )).where(
+                        (self.exchanges.c.exchange == equities_cols.exchange) &
+                        (self.exchanges.c.country_code.in_(country_codes))
+                    ).execute(),
+                ),
+                dtype='f8',  # use doubles so we get NaNs
+            )
+        else:
+            buf = np.array([], dtype='f8')
         lifetimes = np.recarray(
             buf=buf,
             shape=(len(buf),),
             dtype=[
-                ('sid', '<f8'),
-                ('start', '<f8'),
-                ('end', '<f8')
+                ('sid', 'f8'),
+                ('start', 'f8'),
+                ('end', 'f8')
             ],
         )
         start = lifetimes.start
@@ -1420,12 +1427,12 @@ class AssetFinder(object):
         end[np.isnan(end)] = np.iinfo(int).max  # convert missing end to INTMAX
         # Cast the results back down to int.
         return lifetimes.astype([
-            ('sid', '<i8'),
-            ('start', '<i8'),
-            ('end', '<i8'),
+            ('sid', 'i8'),
+            ('start', 'i8'),
+            ('end', 'i8'),
         ])
 
-    def lifetimes(self, dates, include_start_date):
+    def lifetimes(self, dates, include_start_date, country_codes):
         """
         Compute a DataFrame representing asset lifetimes for the specified date
         range.
@@ -1442,6 +1449,8 @@ class AssetFinder(object):
             this date?"  For many financial metrics, (e.g. daily close), data
             isn't available for an asset until the end of the asset's first
             day.
+        country_codes : iterable[str]
+            The country codes to get lifetimes for.
 
         Returns
         -------
@@ -1457,13 +1466,18 @@ class AssetFinder(object):
         numpy.putmask
         zipline.pipeline.engine.SimplePipelineEngine._compute_root_mask
         """
+        # normalize this to a cache-key
+        country_codes = frozenset(country_codes)
+
         # This is a less than ideal place to do this, because if someone adds
         # assets to the finder after we've touched lifetimes we won't have
         # those new assets available.  Mutability is not my favorite
         # programming feature.
-        if self._asset_lifetimes is None:
-            self._asset_lifetimes = self._compute_asset_lifetimes()
-        lifetimes = self._asset_lifetimes
+        lifetimes = self._asset_lifetimes.get(country_codes)
+        if lifetimes is None:
+            self._asset_lifetimes[country_codes] = lifetimes = (
+                self._compute_asset_lifetimes(country_codes)
+            )
 
         raw_dates = as_column(dates.asi8)
         if include_start_date:
